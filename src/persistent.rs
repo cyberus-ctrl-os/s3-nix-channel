@@ -6,7 +6,7 @@ use std::{
     {path::Path, time::Duration},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
 use axum::{
     body::Bytes,
@@ -41,6 +41,11 @@ pub struct ChannelConfig {
     /// compatibility.
     #[serde(default = "default_channel_file_extension")]
     pub file_extension: String,
+
+    /// Alternative names for this channel. This can be used for
+    /// transparent renames.
+    #[serde(default)]
+    pub aliases: Vec<String>,
 
     /// Previous tarballs in this channel.
     #[serde(default)]
@@ -88,6 +93,7 @@ fn default_channel_file_extension() -> String {
 pub struct ChannelsConfig {
     /// A mapping from channel name to latest object key.
     channels: BTreeMap<String, ChannelConfig>,
+    aliases: BTreeMap<String, String>,
 }
 
 impl ChannelsConfig {
@@ -95,8 +101,23 @@ impl ChannelsConfig {
         self.channels.iter().map(|(k, v)| (k.as_ref(), v))
     }
 
-    pub fn channel(&self, channel_name: &str) -> Option<ChannelConfig> {
+    pub fn channel(&self, channel_name: &str, resolve_aliases: bool) -> Option<ChannelConfig> {
+        let channel_name = if resolve_aliases {
+            self.resolve_alias(channel_name)?
+        } else {
+            channel_name
+        };
+
         self.channels.get(channel_name).cloned()
+    }
+
+    /// Resolves a channel name or its alias to its canonical name.
+    pub fn resolve_alias<'a>(&'a self, potential_alias: &'a str) -> Option<&'a str> {
+        if self.channels.contains_key(potential_alias) {
+            Some(potential_alias)
+        } else {
+            self.aliases.get(potential_alias).map(|x| x.as_str())
+        }
     }
 }
 
@@ -164,6 +185,13 @@ impl Client {
                         "Channel {channel_name} points to: {}",
                         channel_config.latest.as_deref().unwrap_or("(nothing yet)")
                     );
+
+                    for alias in &channel_config.aliases {
+                        channels_config
+                            .aliases
+                            .insert(alias.clone(), channel_name.clone());
+                    }
+
                     channels_config
                         .channels
                         .insert(channel_name, channel_config);
@@ -312,15 +340,17 @@ impl Client {
 
         Ok(())
     }
-
     /// Update the channel to point to the given file.
     ///
     /// **Note:** This operation is not concurrency-safe! Clients must
     /// serialize update operations.
     pub async fn update_channel(&self, channel_name: &str, file: &Path) -> Result<()> {
         let channels_config = self.load_channels_config().await?;
+        let channel_name = channels_config
+            .resolve_alias(channel_name)
+            .ok_or_else(|| anyhow!("Failed to find channel: {channel_name}"))?;
         let mut channel = channels_config
-            .channel(channel_name)
+            .channel(channel_name, false)
             .ok_or_else(|| anyhow!("Channel {channel_name} does not exit!"))?;
 
         // We're changing the channel config anyhow, so let's clean it up at the
@@ -337,11 +367,11 @@ impl Client {
             .ok_or_else(|| anyhow!("File name is not valid UTF-8"))?
             .ends_with(&channel.file_extension)
         {
-            return Err(anyhow!(
+            bail!(
                 "Invalid file ending. Only {} is supported: {}",
                 channel.file_extension,
                 file.display()
-            ));
+            );
         }
 
         let object_key = file
@@ -352,7 +382,7 @@ impl Client {
             .to_owned();
 
         if self.file_exists(&object_key).await? {
-            return Err(anyhow!("Refusing to overwrite key: {object_key}"));
+            bail!("Refusing to overwrite key: {object_key}");
         }
 
         let basename = object_key
@@ -373,6 +403,35 @@ impl Client {
             channel.previous.push(previous);
         }
         channel.latest = Some(basename);
+
+        self.write_data(
+            &format!("{channel_name}.json"),
+            serde_json::to_vec_pretty(&channel).context("Failed to serialize channel")?,
+        )
+        .await.context("Failed to update channel. This leaked the tarball! Remove it manually, if this is an issue.")?;
+
+        Ok(())
+    }
+
+    /// Add a new alias to a channel
+    ///
+    /// **Note:** This operation is not concurrency-safe! Clients must
+    /// serialize update operations.
+    pub async fn add_alias(&self, channel_name: &str, alias: &str) -> Result<()> {
+        let channels_config = self.load_channels_config().await?;
+
+        if let Some(conflicting_channel) = channels_config.resolve_alias(alias) {
+            bail!("{alias} is already used for {conflicting_channel}. Refusing to add!");
+        }
+
+        let channel_name = channels_config
+            .resolve_alias(channel_name)
+            .ok_or_else(|| anyhow!("Failed to find channel: {channel_name}"))?;
+        let mut channel = channels_config
+            .channel(channel_name, false)
+            .ok_or_else(|| anyhow!("Channel {channel_name} does not exit!"))?;
+
+        channel.aliases.push(alias.to_owned());
 
         self.write_data(
             &format!("{channel_name}.json"),
