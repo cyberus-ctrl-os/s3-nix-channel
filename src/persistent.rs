@@ -13,7 +13,7 @@ use axum::{
     http::{self, Method},
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::error::RequestError;
 
@@ -161,6 +161,11 @@ impl Client {
 
     // TODO Return a custom error type.
     pub async fn load_channels_config(&self) -> Result<ChannelsConfig> {
+        if !self.file_exists("channels.json").await? {
+            warn!("No channels.json in bucket: Starting with empty configuration!");
+            return Ok(ChannelsConfig::default());
+        }
+
         let persistent_config: PersistentChannelsConfig =
             serde_json::from_slice(&self.read_file("channels.json").await?)
                 .context("Failed to deserialize channels.json")?;
