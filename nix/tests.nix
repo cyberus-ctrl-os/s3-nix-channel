@@ -14,28 +14,6 @@ let
     AWS_ENDPOINT_URL=http://s3:9000
   '';
 
-  channelsConfig = pkgs.writeText "channels.json" (
-    builtins.toJSON {
-      channels = [
-        "thechannel-24.05"
-        "install-24.05"
-      ];
-    }
-  );
-
-  thechannelConfig = pkgs.writeText "thechannel-24.05.json" (
-    builtins.toJSON {
-      latest = "tarball-1234";
-    }
-  );
-
-  installConfig = pkgs.writeText "install-24.05.json" (
-    builtins.toJSON {
-      latest = "media-1234";
-      file_extension = ".iso";
-    }
-  );
-
   tarball =
     pkgs.runCommand "tarball-1234.tar.xz"
       {
@@ -53,6 +31,21 @@ let
         # Create an updated tarball.
         touch foo/world
         tar -cJf $out/tarball-1235.tar.xz foo
+      '';
+
+  isoImage =
+    pkgs.runCommand "media-1234.iso"
+      {
+        nativeBuildInputs = [ pkgs.cdrkit ];
+      }
+      ''
+        mkdir root
+        mkdir $out
+
+        genisoimage -o $out/media-1234.iso root/
+
+        touch root/updated
+        genisoimage -o $out/media-1235.iso root/
       '';
 
   tarballServeCommon =
@@ -79,21 +72,6 @@ let
         inherit bucket;
       };
     };
-
-  isoImage =
-    pkgs.runCommand "media-1234.iso"
-      {
-        nativeBuildInputs = [ pkgs.cdrkit ];
-      }
-      ''
-        mkdir root
-        mkdir $out
-
-        genisoimage -o $out/media-1234.iso root/
-
-        touch root/updated
-        genisoimage -o $out/media-1235.iso root/
-      '';
 
   rsaKeypair =
     pkgs.runCommand "rsa-keypair"
@@ -190,27 +168,32 @@ in
       # Garage sometimes takes a second to come up.
       s3.wait_until_succeeds("mc alias set local http://localhost:9000 ${accessKey} ${secretKey}")
 
-      s3.succeed("mkdir content")
-      s3.copy_from_host("${channelsConfig}", "content/channels.json");
-
-      s3.copy_from_host("${thechannelConfig}", "content/thechannel-24.05.json");
-      s3.copy_from_host("${tarball}/tarball-1234.tar.xz", "content/tarball-1234.tar.xz");
-
-      s3.copy_from_host("${installConfig}", "content/install-24.05.json")
-      s3.copy_from_host("${isoImage}/media-1234.iso", "content/media-1234.iso")
-
-      s3.succeed("mc cp content/* local/${bucket}/")
-
       ## Start our server that doesn't require authentication.
       servePublic.start()
+
+      # It should come up with an empty bucket.
       servePublic.wait_for_unit("s3-nix-channel.service")
+
+      # Populate the configuration
+      servePublic.succeed("mkdir content")
+      servePublic.copy_from_host("${tarball}/tarball-1234.tar.xz", "content/tarball-1234.tar.xz");
+      servePublic.copy_from_host("${tarball}/tarball-1235.tar.xz", "content/tarball-1235.tar.xz");
+      servePublic.copy_from_host("${isoImage}/media-1234.iso", "content/media-1234.iso")
+      servePublic.copy_from_host("${isoImage}/media-1235.iso", "content/media-1235.iso")
+
+      servePublic.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload add-channel ${bucket} thechannel-24.05 .tar.xz")
+      servePublic.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload add-channel ${bucket} install-24.05 .iso")
+
+      servePublic.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} thechannel-24.05 content/tarball-1234.tar.xz")
+      servePublic.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} install-24.05 content/media-1234.iso")
+
+      servePublic.succeed("systemctl restart s3-nix-channel.service")
 
       servePublic.succeed("curl -vL http://localhost/channel/thechannel-24.05.tar.xz > latest.tar.xz")
       servePublic.succeed("curl -vL http://localhost/permanent/tarball-1234.tar.xz > permanent.tar.xz")
 
-      servePublic.copy_from_host("${tarball}/tarball-1234.tar.xz", "reference.tar.xz")
-      servePublic.succeed("cmp reference.tar.xz latest.tar.xz")
-      servePublic.succeed("cmp reference.tar.xz permanent.tar.xz")
+      servePublic.succeed("cmp content/tarball-1234.tar.xz latest.tar.xz")
+      servePublic.succeed("cmp content/tarball-1234.tar.xz permanent.tar.xz")
 
       # Now with HEAD requests
       assert "200" == servePublic.succeed("curl -s -o /dev/null -w '%{http_code}' --head -vL http://localhost/channel/thechannel-24.05.tar.xz")
@@ -220,14 +203,27 @@ in
       servePublic.succeed("curl -vL http://localhost/channel/install-24.05.iso > latest.iso")
       servePublic.succeed("curl -vL http://localhost/permanent/media-1234.iso > permanent.iso")
 
-      servePublic.copy_from_host("${isoImage}/media-1234.iso", "reference.iso")
-      servePublic.succeed("cmp reference.iso latest.iso")
-      servePublic.succeed("cmp reference.iso permanent.iso")
+      servePublic.succeed("cmp content/media-1234.iso latest.iso")
+      servePublic.succeed("cmp content/media-1234.iso permanent.iso")
 
       # Check whether we don't accidentally serve the config files
       servePublic.fail("curl --fail -vL http://localhost/channels.json")
       servePublic.fail("curl --fail -vL http://localhost/thechannel-24.05.json")
       servePublic.fail("curl --fail -vL http://localhost/install-24.05.json")
+
+      # Add an alias
+      servePublic.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload add-alias ${bucket} thechannel-24.05 foobar-24.05")
+
+      # Fail to add duplicated aliases.
+      servePublic.fail("env $(cat ${secretsFile}) s3-nix-channel-upload add-alias ${bucket} thechannel-24.05 foobar-24.05")
+
+      # Fail to add other channel names as aliases.
+      servePublic.fail("env $(cat ${secretsFile}) s3-nix-channel-upload add-alias ${bucket} thechannel-24.05 install-24.05")
+
+      # Can fetch via alias
+      servePublic.succeed("systemctl restart s3-nix-channel.service")
+      servePublic.succeed("curl -vL http://localhost/channel/foobar-24.05.tar.xz > alias.tar.xz")
+      servePublic.succeed("cmp content/tarball-1234.tar.xz alias.tar.xz")
 
       ## Start our server that requires authentication
       servePrivate.start()
