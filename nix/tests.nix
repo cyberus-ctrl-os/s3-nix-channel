@@ -31,6 +31,10 @@ let
         # Create an updated tarball.
         touch foo/world
         tar -cJf $out/tarball-1235.tar.xz foo
+
+        # Create yet another updated tarball.
+        touch foo/again
+        tar -cJf $out/tarball-1236.tar.xz foo
       '';
 
   isoImage =
@@ -178,6 +182,7 @@ in
       servePublic.succeed("mkdir content")
       servePublic.copy_from_host("${tarball}/tarball-1234.tar.xz", "content/tarball-1234.tar.xz");
       servePublic.copy_from_host("${tarball}/tarball-1235.tar.xz", "content/tarball-1235.tar.xz");
+      servePublic.copy_from_host("${tarball}/tarball-1236.tar.xz", "content/tarball-1236.tar.xz");
       servePublic.copy_from_host("${isoImage}/media-1234.iso", "content/media-1234.iso")
       servePublic.copy_from_host("${isoImage}/media-1235.iso", "content/media-1235.iso")
 
@@ -225,6 +230,14 @@ in
       servePublic.succeed("curl -vL http://localhost/channel/foobar-24.05.tar.xz > alias.tar.xz")
       servePublic.succeed("cmp content/tarball-1234.tar.xz alias.tar.xz")
 
+      # Can publish via alias
+      servePublic.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} foobar-24.05 content/tarball-1235.tar.xz")
+      servePublic.succeed("systemctl restart s3-nix-channel.service")
+      servePublic.succeed("curl -vL http://localhost/channel/foobar-24.05.tar.xz > alias-new.tar.xz")
+      servePublic.succeed("cmp content/tarball-1235.tar.xz alias-new.tar.xz")
+      servePublic.succeed("curl -vL http://localhost/channel/thechannel-24.05.tar.xz > alias-new2.tar.xz")
+      servePublic.succeed("cmp content/tarball-1235.tar.xz alias-new2.tar.xz")
+
       ## Start our server that requires authentication
       servePrivate.start()
       servePrivate.wait_for_unit("s3-nix-channel.service")
@@ -250,11 +263,11 @@ in
       servePrivate.succeed("cd flake ; git init ; git add flake.nix ; nix flake lock")
 
       # Check whether the lock file records the right permanent URL.
-      assert "http://localhost/permanent/tarball-1234.tar.xz\n" == servePrivate.succeed("jq -r .nodes.thechannel.locked.url flake/flake.lock")
+      assert "http://localhost/permanent/tarball-1235.tar.xz\n" == servePrivate.succeed("jq -r .nodes.thechannel.locked.url flake/flake.lock")
 
       # Check whether we can update the tarball.
-      servePrivate.copy_from_host("${tarball}/tarball-1235.tar.xz", "tarball-1235.tar.xz")
-      print(servePrivate.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} thechannel-24.05 tarball-1235.tar.xz"))
+      servePrivate.copy_from_host("${tarball}/tarball-1236.tar.xz", "tarball-1236.tar.xz")
+      print(servePrivate.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} thechannel-24.05 tarball-1236.tar.xz"))
 
       # Check whether we can update files with different extensions as well.
       servePrivate.copy_from_host("${isoImage}/media-1235.iso", "media-1235.iso")
@@ -277,7 +290,7 @@ in
 
       # Check whether the flake updates to the new version
       servePrivate.succeed("cd flake ; nix flake update")
-      assert "http://localhost/permanent/tarball-1235.tar.xz\n" == servePrivate.succeed("jq -r .nodes.thechannel.locked.url flake/flake.lock")
+      assert "http://localhost/permanent/tarball-1236.tar.xz\n" == servePrivate.succeed("jq -r .nodes.thechannel.locked.url flake/flake.lock")
     '';
   };
 }
