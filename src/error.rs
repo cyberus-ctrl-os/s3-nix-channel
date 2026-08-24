@@ -31,7 +31,7 @@ impl IntoResponse for RequestError {
                 | RequestError::PresignFailure { object_key: _ }
                 | RequestError::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
             },
-            format!("{}", &self),
+            format!("{}", self),
         )
             .into_response()
     }

@@ -2,10 +2,10 @@
 let
   pkgs = self.inputs.nixpkgs.legacyPackages.${system};
 
-  accessKey = "12341234";
-  secretKey = "abcdabcd";
+  accessKey = "GKaaaaaaaaaaaaaaaaaaaaaaaa";
+  secretKey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   region = "eu-central-1";
-  bucket = "bucket";
+  bucket = "channels";
 
   secretsFile = pkgs.writeText "fake-secrets" ''
     AWS_ACCESS_KEY_ID=${accessKey}
@@ -118,15 +118,29 @@ in
 
     nodes = {
       s3 = {
-        services.minio = {
-          inherit accessKey secretKey region;
-
+        services.garage = {
           enable = true;
-          # minio listens by default on port 9000.
+          package = pkgs.garage_2;
+
+          settings = {
+            replication_factor = 1;
+            consistent_mode = "consistent";
+
+            rpc_bind_addr = "[::]:3901";
+            rpc_public_addr = "[::]:3901";
+            rpc_secret = "5c1915fa04d0b6739675c61bf5907eb0fe3d9c69850c83820f51b4d25d13868c";
+
+            s3_api = {
+              s3_region = region;
+              api_bind_addr = "[::]:9000";
+              root_domain = ".s3.garage";
+            };
+
+          };
         };
 
-        environment.systemPackages = with pkgs; [
-          minio-client
+        environment.systemPackages = [
+          pkgs.minio-client
         ];
 
         networking.firewall.enable = false;
@@ -154,13 +168,27 @@ in
 
     testScript = ''
       s3.start()
-      s3.wait_for_unit("minio.service")
+      s3.wait_for_unit("garage.service")
+      s3.wait_for_open_port(3901)
+
+      # Create cluster
+      node_id = s3.succeed("garage status | tail -n1 | cut -d' ' -f1")
+      s3.succeed(f"garage layout assign -z dc1 -c 128M {node_id}")
+      s3.succeed("garage layout apply --version 1")
+
+      # Create bucket
+      s3.succeed("garage bucket create ${bucket}")
+
+      # Create access keys
+      s3.succeed("garage key import ${accessKey} ${secretKey} --yes")
+      s3.succeed("garage bucket allow --read --write --owner ${bucket} --key ${accessKey}")
+
+      s3.wait_for_open_port(9000)
 
       ## Prepare the bucket of tarballs with configuration.
 
-      # Minio sometimes takes a second to come up.
+      # Garage sometimes takes a second to come up.
       s3.wait_until_succeeds("mc alias set local http://localhost:9000 ${accessKey} ${secretKey}")
-      s3.succeed("mc mb local/${bucket}")
 
       s3.succeed("mkdir content")
       s3.copy_from_host("${channelsConfig}", "content/channels.json");
