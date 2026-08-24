@@ -22,6 +22,17 @@ enum Commands {
         /// The file extension for the channel.
         extension: String,
     },
+    /// Add a new alias to a channel.
+    AddAlias {
+        /// The S3 bucket to upload the content to.
+        bucket: String,
+
+        /// The channel to add an alias to.
+        channel: String,
+
+        /// The new alias.
+        alias: String,
+    },
     /// Show the channel details.
     ShowChannel {
         /// The S3 bucket to upload the content to.
@@ -65,6 +76,11 @@ impl Args {
                 channel: _,
                 file: _,
             } => bucket,
+            Commands::AddAlias {
+                bucket,
+                channel: _,
+                alias: _,
+            } => bucket,
         }
     }
 }
@@ -83,7 +99,16 @@ async fn add_channel(s3_client: &Client, channel: &str, extension: &str) -> Resu
     s3_client
         .add_channel(channel, extension)
         .await
-        .context("Failed create channel")?;
+        .context("Failed to create channel")?;
+
+    Ok(())
+}
+
+async fn add_alias(s3_client: &Client, channel: &str, alias: &str) -> Result<()> {
+    s3_client
+        .add_alias(channel, alias)
+        .await
+        .context("Failed to add alias")?;
 
     Ok(())
 }
@@ -94,7 +119,7 @@ async fn show_channel(s3_client: &Client, channel: &str) -> Result<()> {
     println!(
         "Latest: {}",
         config
-            .channel(channel)
+            .channel(channel, true)
             .context("No such channel")?
             .latest
             .as_deref()
@@ -131,6 +156,11 @@ async fn main() -> Result<()> {
             channel,
             extension,
         } => add_channel(&s3_client, &channel, &extension).await?,
+        Commands::AddAlias {
+            bucket: _,
+            channel,
+            alias,
+        } => add_alias(&s3_client, &channel, &alias).await?,
         Commands::Publish {
             bucket: _,
             channel,

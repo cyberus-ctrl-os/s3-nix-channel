@@ -75,8 +75,13 @@ async fn handle_channel(
         let (_, channel_config) = channels_config
             .channels()
             .find(|(k, v)| {
-                debug!("{path} vs {k}{}", v.file_extension);
-                path == format!("{k}{}", v.file_extension)
+                std::iter::once(*k)
+                    .chain(v.aliases.iter().map(|s| s.as_str()))
+                    .find(|name| {
+                        let candidate = format!("{name}{}", v.file_extension);
+                        path == candidate
+                    })
+                    .is_some()
             })
             .ok_or_else(|| RequestError::NoSuchChannel {
                 file_name: path.clone(),
