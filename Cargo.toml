@@ -12,22 +12,22 @@ name = "s3-nix-channel"
 name = "s3-nix-channel-upload"
 
 [dependencies]
-anyhow = "1.0.97"
-arc-swap = "1.7.1"
-aws-config = { version = "1.1.7", features = ["behavior-version-latest", "default-https-client", "rt-tokio"], default-features = false }
-aws-sdk-s3 = "1.79.0"
-axum = { version = "0.8.1", default-features = false, features = ["http1", "macros", "tokio", "tracing"] }
+anyhow = "1.0.104"
+arc-swap = "1.9.2"
+aws-config = { version = "1.11.0", features = ["behavior-version-latest", "default-https-client", "rt-tokio"], default-features = false }
+aws-sdk-s3 = "1.143.0"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "macros", "tokio", "tracing"] }
 base64 = "0.22.1"
-clap = { version = "4.5.33", default-features = false, features = ["derive", "help", "std", "usage"] }
+clap = { version = "4.6.6", default-features = false, features = ["derive", "help", "std", "usage"] }
 jsonwebtoken = { version = "10.0.0", default-features = false, features = ["rust_crypto", "use_pem"] }
 sd-notify = { version = "0.5.0", default-features = false }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.140"
-thiserror = "2.0.12"
-tokio = { version = "1.44.1", features = ["macros", "net", "rt-multi-thread", "tracing"] }
-tower-http = { version = "0.6.2", features = ["trace"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "tracing"] }
+tower-http = { version = "0.7.0", features = ["trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [profile.release]
 lto = "thin"
