@@ -21,7 +21,7 @@
 
       nixpkgs.overlays = [
         (final: prev: {
-          s3-nix-channel = self.packages.${pkgs.hostPlatform.system}.default;
+          s3-nix-channel = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
         })
       ];
     };
